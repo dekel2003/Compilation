@@ -1,0 +1,87 @@
+%{
+	#include "hw4.hpp"
+	#include "output.hpp"
+	#include <iostream>
+	#include <stdlib.h>
+	#include <vector>
+	
+	using namespace std;
+	using namespace output;
+	
+	extern int yylineno;
+	extern int yylex();
+	
+	class Var{
+	public:
+		string id;
+		_TYPE type;
+		bool isTemp;
+		int value;
+		
+		int offset;
+		
+		Var(string id, _TYPE type, int offset, int value = -1) : id(id),type(type),offset(offset),value(value){
+			isTemp = false;
+			if (type == DECIMAL_T || type == BINARY_T || type == HEXA_T)
+				isTemp = true;
+			}
+	};
+	
+	///// global variables  ////////
+	vector<vector<Var> > scopes;
+	int numOfVars = 0;
+	int numOfWhiles = 0;
+	
+	
+	///// functions declarations /////
+	
+	int main();
+	int yyerror(const char* message);
+	
+	void openScope();
+	void closeScope();
+	Var& findVar (const string id);
+	int isDefined (const string id);
+	string typeToStr(eTypes type);
+	
+	
+%}	
+	
+	
+%right 	ASSIGN
+%left 	AND OR
+%left 	REL_OP
+%left 	MINUS PLUS
+%left 	DIV MULT
+%right	NOT
+%token 	IF
+%nonassoc RP
+%nonassoc ELSE
+%token	LP SC
+%token	DECIMAL BINARY HEXA INT TRUE FALSE BOOL NUM ID
+%token	INPUT PRINT STRING
+%token	CASE SWITCH
+%token	WHILE BREAK 
+%token 	LC RC COL
+
+%%	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
