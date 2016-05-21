@@ -26,3 +26,8 @@
 *.exe
 *.out
 *.app
+
+# Others
+test1
+test1.out
+*.pdf
