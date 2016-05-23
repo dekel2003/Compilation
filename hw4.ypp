@@ -46,6 +46,7 @@
 	void assertDefined (const string id);
 	string typeToStr(_TYPE type);
 	vector<Var>& currScope();
+	bool isDefinedInCurrentScope (const string id);
 	
 %}
 	
@@ -76,33 +77,29 @@ Statements		:	Statements Statement
 
 Statement:	    {openScope();}	LC Statements RC {closeScope();}
 				|	Type ID SC {
-						if (isDefined($2.id)){
-							errorUndef(yylineno, $2.id.c_str());
+						if (isDefinedInCurrentScope($2.id)){
+							errorDef(yylineno, $2.id.c_str());
 							exit(0);
 						}
 						currScope().push_back(Var($2.id, $1.type, numVariables++));
 					}
 				|	Type ID ASSIGN Exp SC {
-						if (isDefined($2.id)){
-							errorUndef(yylineno, $2.id.c_str());
+						if (isDefinedInCurrentScope($2.id)){
+							errorDef(yylineno, $2.id.c_str());
 							exit(0);
 						}
-						if ($1.type != $4.type) {
-							if (!$1.isBase || !$4.isBase){
+						if (!$1.isBase && $1.type != $4.type || ($1.isBase != $4.isBase)) {
 								errorMismatch(yylineno);
 								exit(0);
-							}
 						}
 						currScope().push_back(Var($2.id, $1.type, numVariables++, $4.value));
 					}
 				|   ID ASSIGN Exp SC {
 						assertDefined($1.id);
 						Var& v = findVar($1.id);
-						if (v.type != $3.type) {
-							if (!v.isBase || !$3.isBase){
+						if (!v.isBase && v.type != $3.type || (v.isBase != $3.isBase)) {
 								errorMismatch(yylineno);
 								exit(0);
-							}
 						}
 						v.value = $3.value;
 					}
@@ -197,7 +194,7 @@ CaseStat		:	CASE NUM BaseType COL ScopeStatement BREAK SC;
 ScopeStatement:	Type ID SC
 					{
 						openScope();
-						if(isDefined($2.id)){
+						if(isDefinedInCurrentScope($2.id)){
 								errorDef(yylineno, $2.id.c_str());
 								exit(0);
 						}
@@ -206,15 +203,13 @@ ScopeStatement:	Type ID SC
 					}
 				|	Type ID ASSIGN Exp SC {
 						openScope();
-						if(isDefined($2.id)){
+						if(isDefinedInCurrentScope($2.id)){
 								errorDef(yylineno, $2.id.c_str());
 								exit(0);
 						}
-						if ($1.type != $4.type) {
-							if (!$1.isBase || !$4.isBase){
+						if (!$1.isBase && $1.type != $4.type || ($1.isBase != $4.isBase)) {
 								errorMismatch(yylineno);
 								exit(0);
-							}
 						}
 						currScope().push_back(Var($2.id, $1.type, numVariables++, $4.value));
 						closeScope();
@@ -230,11 +225,9 @@ NotScopeStatement:	{
 				|	ID ASSIGN Exp SC {
 						assertDefined($1.id);
 						Var& v = findVar($1.id);
-						if (v.type != $3.type) {
-							if (!v.isBase || !$3.isBase){
+						if (!v.isBase && v.type != $3.type || (v.isBase != $3.isBase)) {
 								errorMismatch(yylineno);
 								exit(0);
-							}
 						}
 						v.value = $3.value;
 					}
@@ -316,6 +309,9 @@ Exp 			:	LP Exp RP	{
 						if ($1.type == BOOL_T || $1.type == ID_T ||  $3.type == BOOL_T || $3.type == ID_T) {
 							errorMismatch(yylineno);
 							exit(0);
+						} else if ($1.isBase != $3.isBase) {
+							errorMismatch(yylineno);
+							exit(0);
 						}
 						$$.type = $1.type;
 						$$.isBase = $3.isBase;
@@ -369,7 +365,7 @@ Exp 			:	LP Exp RP	{
 						}
 						$$.type = $2.type;
 						$$.value = 1 - $2.value;
-						$$.isBase = $2.value;
+						$$.isBase = $2.isBase;
 					}
 				|	Exp OR Exp {
 						if ($1.type != BOOL_T || $3.type != BOOL_T) {
@@ -378,7 +374,7 @@ Exp 			:	LP Exp RP	{
 						}
 						$$.type = $1.type;
 						$$.value = (int)$1.value | (int)$3.value;
-						$$.isBase = $1.value;
+						$$.isBase = $1.isBase;
 					}
 				|	Exp AND Exp	{
 						if ($1.type != BOOL_T || $3.type != BOOL_T) {
@@ -387,10 +383,10 @@ Exp 			:	LP Exp RP	{
 						}
 						$$.type = $1.type;
 						$$.value = (int)$1.value & (int)$3.value;
-						$$.isBase = $1.value;
+						$$.isBase = $1.isBase;
 					}
 				|	Exp REL_OP Exp	{
-						if ($1.type == BOOL_T ||  $3.type == BOOL_T ) {
+						if (!$1.isBase && $1.type != $3.type || ($1.isBase != $3.isBase)) {
 							errorMismatch(yylineno);
 							exit(0);
 						} else if ($1.isBase != $3.isBase) {
@@ -472,6 +468,18 @@ bool isDefined (const string id) {
 			}
 		}
 	}
+	return false;
+}
+
+bool isDefinedInCurrentScope (const string id) {
+	//for (std::vector<vector<Var> >::reverse_iterator i = scopes.rbegin(); i != scopes.rend(); ++i) {
+		vector<Var>& scope = currScope();
+		for (std::vector<Var>::iterator j = scope.begin(); j != scope.end(); ++j) {
+			if (j->id == id) {
+				return true;
+			}
+		}
+	//}
 	return false;
 }
 
