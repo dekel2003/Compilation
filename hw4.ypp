@@ -1,10 +1,10 @@
 %{
-	#include "hw4.hpp"
-	#include "output.hpp"
-	#include <iostream>
 	#include <stdlib.h>
 	#include <vector>
-	
+	#include <iostream>
+	#include "hw4.hpp"
+	#include "output.hpp"
+
 	using namespace std;
 	using namespace output;
 	
@@ -15,21 +15,22 @@
 	public:
 		string id;
 		_TYPE type;
-		bool isTemp;
+		bool isBase;
 		int value;
 		
 		int offset;
 		
 		Var(string id, _TYPE type, int offset, int value = -1) : id(id),type(type),offset(offset),value(value){
-			isTemp = false;
+			isBase = false;
 			if (type == DECIMAL_T || type == BINARY_T || type == HEXA_T)
-				isTemp = true;
+				isBase = true;
 			}
 	};
 	
 	///// global variables  ////////
+	
 	vector<vector<Var> > scopes;
-	int numOfVars = 0;
+	int numVariables = 0;
 	int numOfWhiles = 0;
 	
 	
@@ -41,11 +42,12 @@
 	void openScope();
 	void closeScope();
 	Var& findVar (const string id);
-	int isDefined (const string id);
-	string typeToStr(eTypes type);
+	bool isDefined (const string id);
+	void assertDefined (const string id);
+	string typeToStr(_TYPE type);
+	vector<Var>& currScope();
 	
-	
-%}	
+%}
 	
 	
 %right 	ASSIGN
@@ -58,7 +60,7 @@
 %nonassoc RP
 %nonassoc ELSE
 %token	LP SC
-%token	DECIMAL BINARY HEXA INT TRUE FALSE BOOL NUM ID
+%token	DECIMAL BINARY HEXIDECIMAL INT TRUE FALSE BOOL NUM ID
 %token	INPUT PRINT STRING
 %token	CASE SWITCH
 %token	WHILE BREAK 
@@ -66,6 +68,338 @@
 
 %%	
 	
+Prog			:	Statements;	
+	
+Statements		:	Statements Statement
+				|	Statement;	
+	
+
+Statement:	    {openScope();}	LC Statements RC {closeScope();}
+				|	Type ID SC {
+						if (isDefined($2.id)){
+							errorUndef(yylineno, $2.id.c_str());
+							exit(0);
+						}
+						currScope().push_back(Var($2.id, $1.type, numVariables++));
+					}
+				|	Type ID ASSIGN Exp SC {
+						if (isDefined($2.id)){
+							errorUndef(yylineno, $2.id.c_str());
+							exit(0);
+						}
+						if ($1.type != $4.type) {
+							if (!$1.isBase || !$4.isBase){
+								errorMismatch(yylineno);
+								exit(0);
+							}
+						}
+						currScope().push_back(Var($2.id, $1.type, numVariables++, $4.value));
+					}
+				|   ID ASSIGN Exp SC {
+						assertDefined($1.id);
+						Var& v = findVar($1.id);
+						if (v.type != $3.type) {
+							if (!v.isBase || !$3.isBase){
+								errorMismatch(yylineno);
+								exit(0);
+							}
+						}
+						v.value = $3.value;
+					}
+				|	PRINT ID SC	{
+						assertDefined($2.id);
+						Var& v = findVar($2.id);
+						if (!v.isBase) {
+							errorMismatch(yylineno);
+							exit(0);
+						}
+					}
+				|	PRINT STRING SC	{
+					}
+				|	INPUT ID SC
+					{
+						assertDefined($2.id);
+						Var& v = findVar($2.id);
+						if (!v.isBase) {
+							errorMismatch(yylineno);
+							exit(0);
+						}
+					}
+				|	IF LP Exp RP ScopeStatement	{
+						if ($3.type != BOOL_T){
+							errorMismatch(yylineno);
+							exit(0);
+						} 
+					}
+				|	IF LP Exp RP ScopeStatement ELSE ScopeStatement	{
+						if ($3.type != BOOL_T){
+							errorMismatch(yylineno);
+							exit(0);
+						} 
+					}
+				|	{
+						++numOfWhiles;
+					}
+					WHILE LP Exp RP ScopeStatement	{
+						--numOfWhiles;
+						if ($4.type != BOOL_T){
+							errorMismatch(yylineno);
+							exit(0);
+						}
+					}
+				|	BREAK SC {
+						if (!numOfWhiles) {
+							errorUnexpectedBreak(yylineno);
+							exit(0);
+						}
+					}
+				|	SWITCH LP Exp RP LC CasesList RC {
+						if (!$3.isBase){
+							errorMismatch(yylineno);
+							exit(0);
+						} 
+					};	
+					
+Type			:	BaseType {
+							$$.type = $1.type;
+							$$.value = $1.value;
+							$$.isBase = $1.isBase;
+							}
+				|	BOOL{
+							$$.type = $1.type;
+							$$.value = $1.value;
+							$$.isBase = $1.isBase;
+						};
+
+BaseType	:	DECIMAL {
+						$$.type = $1.type;
+						$$.value = $1.value;
+						$$.isBase = $1.isBase;
+						}
+				|	BINARY {
+						$$.type = $1.type;
+						$$.value = $1.value;
+						$$.isBase = $1.isBase;
+						}
+				|	HEXIDECIMAL{
+						$$.type = $1.type;
+						$$.value = $1.value;
+						$$.isBase = $1.isBase;
+						};
+
+CasesList		:	CaseStat CasesList {}
+				|	CaseStat{};
+
+CaseStat		:	CASE NUM BaseType COL ScopeStatement BREAK SC;
+
+
+
+ScopeStatement:	Type ID SC
+					{
+						openScope();
+						if(isDefined($2.id)){
+								errorDef(yylineno, $2.id.c_str());
+								exit(0);
+						}
+						currScope().push_back(Var($2.id, $1.type, numVariables++));
+						closeScope();
+					}
+				|	Type ID ASSIGN Exp SC {
+						openScope();
+						if(isDefined($2.id)){
+								errorDef(yylineno, $2.id.c_str());
+								exit(0);
+						}
+						if ($1.type != $4.type) {
+							if (!$1.isBase || !$4.isBase){
+								errorMismatch(yylineno);
+								exit(0);
+							}
+						}
+						currScope().push_back(Var($2.id, $1.type, numVariables++, $4.value));
+						closeScope();
+					}
+				|	NotScopeStatement;
+				
+NotScopeStatement:	{
+						openScope();
+					}
+					LC Statements RC {
+						closeScope();
+					}
+				|	ID ASSIGN Exp SC {
+						assertDefined($1.id);
+						Var& v = findVar($1.id);
+						if (v.type != $3.type) {
+							if (!v.isBase || !$3.isBase){
+								errorMismatch(yylineno);
+								exit(0);
+							}
+						}
+						v.value = $3.value;
+					}
+				|	PRINT ID SC	{
+						assertDefined($2.id);
+						Var& v = findVar($2.id);
+					}
+				|	PRINT STRING SC	{}
+				|	INPUT ID SC	{
+						assertDefined($2.id);
+						Var& v = findVar($2.id);
+					}
+				|	IF LP Exp RP ScopeStatement	{
+						if ($3.type != BOOL_T){
+							errorMismatch(yylineno);
+							exit(0);
+						} 
+					}
+				|	IF LP Exp RP ScopeStatement ELSE ScopeStatement	{
+						if ($3.type != BOOL_T){
+							errorMismatch(yylineno);
+							exit(0);
+						} 
+					}
+				|	{
+						++numOfWhiles;
+					}
+					WHILE LP Exp RP ScopeStatement {
+						--numOfWhiles;
+						if ($4.type != BOOL_T){
+							errorMismatch(yylineno);
+							exit(0);
+						}
+					}
+				|	BREAK SC {
+						if (!numOfWhiles) {
+							errorUnexpectedBreak(yylineno);
+							exit(0);
+						}
+					}
+				|	SWITCH LP Exp RP LC CasesList RC {
+						if (!$3.isBase){
+							errorMismatch(yylineno);
+							exit(0);
+						} 
+					};				
+
+
+Exp 			:	LP Exp RP	{
+						$$.type = $2.type;
+						$$.value = $2.value;
+						$$.isBase = $2.isBase;
+					}
+				|	Exp PLUS Exp{
+						if ($1.type == BOOL_T || $1.type == ID_T ||  $3.type == BOOL_T || $3.type == ID_T) {
+							errorMismatch(yylineno);
+							exit(0);
+						} else if ($1.isBase != $3.isBase) {
+							errorMismatch(yylineno);
+							exit(0);
+						}
+						$$.type = $1.type;
+						$$.isBase = $1.isBase;
+						$$.value = $1.value + $3.value;
+					}
+				|	Exp MINUS Exp{
+						if ($1.type == BOOL_T || $1.type == ID_T ||  $3.type == BOOL_T || $3.type == ID_T) {
+							errorMismatch(yylineno);
+							exit(0);
+						} else if ($1.isBase != $3.isBase) {
+							errorMismatch(yylineno);
+							exit(0);
+						}
+						$$.type = $1.type;
+						$$.isBase = $1.isBase;
+						$$.value = $1.value - $3.value;
+					}
+				|	Exp MULT Exp{
+						if ($1.type == BOOL_T || $1.type == ID_T ||  $3.type == BOOL_T || $3.type == ID_T) {
+							errorMismatch(yylineno);
+							exit(0);
+						}
+						$$.type = $1.type;
+						$$.isBase = $3.isBase;
+
+						$$.value = $1.value * $3.value;
+					}
+				|	Exp DIV Exp	{
+						if ($1.type == BOOL_T || $1.type == ID_T ||  $3.type == BOOL_T || $3.type == ID_T) {
+							errorMismatch(yylineno);
+							exit(0);
+						} else if ( !$1.isBase && $3.isBase) {
+							errorMismatch(yylineno);
+							exit(0);
+						}
+
+						$$.type = $1.type;
+						$$.isBase = $1.isBase;
+						$$.value = $1.value / $3.value;
+					}
+					
+				|	ID	{
+					assertDefined($1.id);
+					Var &v = findVar($1.id);
+					$$.type = v.type;
+					$$.value = v.value;
+					$$.isBase = v.isBase;
+					}
+				|	NUM	{
+						$$.type = $1.type;
+						$$.value = $1.value;
+						$$.isBase = $1.isBase;
+					}
+				|	NUM BaseType {
+						$$.type = $2.type;
+						$$.isBase = $2.isBase;
+					}
+				|	TRUE {
+						$$.type = $1.type;
+						$$.value = $1.value;
+						$$.isBase = $1.isBase;
+					}
+				|	FALSE {
+						$$.type = $1.type;
+						$$.value = $1.value;
+						$$.isBase = $1.isBase;
+					}
+				|	NOT Exp {
+						if ($2.type != BOOL_T) {
+							errorMismatch(yylineno);
+							exit(0);
+						}
+						$$.type = $2.type;
+						$$.value = 1 - $2.value;
+						$$.isBase = $2.value;
+					}
+				|	Exp OR Exp {
+						if ($1.type != BOOL_T || $3.type != BOOL_T) {
+							errorMismatch(yylineno);
+							exit(0);
+						}
+						$$.type = $1.type;
+						$$.value = (int)$1.value | (int)$3.value;
+						$$.isBase = $1.value;
+					}
+				|	Exp AND Exp	{
+						if ($1.type != BOOL_T || $3.type != BOOL_T) {
+							errorMismatch(yylineno);
+							exit(0);
+						}
+						$$.type = $1.type;
+						$$.value = (int)$1.value & (int)$3.value;
+						$$.isBase = $1.value;
+					}
+				|	Exp REL_OP Exp	{
+						if ($1.type == BOOL_T ||  $3.type == BOOL_T ) {
+							errorMismatch(yylineno);
+							exit(0);
+						} else if ($1.isBase != $3.isBase) {
+							errorMismatch(yylineno);
+							exit(0);
+						}
+						$$.type = BOOL_T;
+						$$.isBase = false;
+					};
 	
 	
 	
@@ -85,3 +419,80 @@
 	
 	
 	
+	
+	
+	
+	
+	
+%%	
+	
+int main() {
+	openScope();
+	yyparse();
+	closeScope();
+}
+
+int yyerror(const char* message){
+	errorSyn(yylineno);
+	exit(0);
+}	
+	
+void openScope() {
+		scopes.push_back(vector<Var>());
+}
+void closeScope() {
+	vector<Var> &v = scopes.back();
+	endScope();
+	for (std::vector<Var>::iterator i = v.begin(); i != v.end(); ++i) {
+		printVar(i->id.c_str(),i->offset,typeToStr(i->type).c_str());
+		--numVariables;
+	}
+	scopes.pop_back();
+}	
+	
+	
+vector<Var>& currScope(){
+		return scopes.back();
+}
+	
+Var& findVar (const string id) {
+	for (std::vector<vector<Var> >::reverse_iterator i = scopes.rbegin(); i != scopes.rend(); ++i) {
+		for (std::vector<Var>::iterator j = i->begin(); j != i->end(); ++j) {
+			if (j->id == id) {
+				return *j;
+			}
+		}
+	}
+}
+bool isDefined (const string id) {
+	for (std::vector<vector<Var> >::reverse_iterator i = scopes.rbegin(); i != scopes.rend(); ++i) {
+		for (std::vector<Var>::iterator j = i->begin(); j != i->end(); ++j) {
+			if (j->id == id) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+void assertDefined (const string id) {
+	if (!isDefined(id)){
+		errorUndef(yylineno, id.c_str());
+		exit(0);
+	}
+}
+
+string typeToStr(_TYPE type) {
+	switch (type){
+	case (BOOL_T):
+		return string("BOOL");
+	case (DECIMAL_T):
+		return string("DECIMAL");
+	case (BINARY_T):
+		return string("BINARY");
+	case (HEXA_T):
+		return string("HEXIDECIMAL");
+	default:
+		return string("error");
+	}
+}
