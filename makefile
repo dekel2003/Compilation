@@ -1,11 +1,11 @@
-hw4: hw4.tab.cpp lex.yy.c hw4.hpp output.cpp output.hpp
-	g++ -o ex4.exe hw4.tab.cpp output.cpp lex.yy.c
+hw5: hw5.tab.cpp lex.yy.c hw5.hpp output.cpp output.hpp
+	g++ -o ex4.exe hw5.tab.cpp output.cpp lex.yy.c
 
-lex.yy.c: hw4.lex
-	lex hw4.lex
+lex.yy.c: hw5.lex
+	lex hw5.lex
 
-hw4.tab.cpp: hw4.ypp
-	bison -d hw4.ypp
+hw5.tab.cpp: hw5.ypp
+	bison -d hw5.ypp
 
 clean:
-	rm lex.yy.c hw4.tab.hpp hw4.tab.cpp ex4.exe
+	rm lex.yy.c hw5.tab.hpp hw5.tab.cpp ex4.exe
