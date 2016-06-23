@@ -1,38 +1,27 @@
 %{
 	#include <stdlib.h>
 	#include <vector>
-	#include <iostream>
 	#include "hw5.hpp"
 	#include "output.hpp"
+	#include "bp.hpp"
 
+	
 	using namespace std;
 	using namespace output;
 	
 	extern int yylineno;
 	extern int yylex();
 	
-	class Var{
-	public:
-		string id;
-		_TYPE type;
-		bool isBase;
-		int value;
-		
-		int offset;
-		
-		Var(string id, _TYPE type, int offset, int value = -1) : id(id),type(type),offset(offset),value(value){
-			isBase = false;
-			if (type == DECIMAL_T || type == BINARY_T || type == HEXA_T)
-				isBase = true;
-			}
-	};
 	
 	///// global variables  ////////
 	
 	vector<vector<Var> > scopes;
 	int numVariables = 0;
 	int numOfWhiles = 0;
+	int numBreaks = 0;
 	
+	list<int> breakGotoAddress;
+	list<char*> switchHierarchyTypes;
 	
 	///// functions declarations /////
 	
@@ -47,6 +36,8 @@
 	string typeToStr(_TYPE type);
 	vector<Var>& currScope();
 	bool isDefinedInCurrentScope (const string id);
+	
+	string convert(char* type1, char* type2, string place2);
 	
 %}
 	
@@ -69,12 +60,11 @@
 
 %%	
 	
-Prog			:	Statements;	
+Prog			:	Statements;
 	
 Statements		:	Statements Statement
 				|	Statement;	
 	
-
 Statement:	    {openScope();}	LC Statements RC {closeScope();}
 				|	Type ID SC {
 						if (isDefinedInCurrentScope($2.id)){
@@ -92,7 +82,19 @@ Statement:	    {openScope();}	LC Statements RC {closeScope();}
 								errorMismatch(yylineno);
 								exit(0);
 						}
-						currScope().push_back(Var($2.id, $1.type, numVariables++, $4.value));
+						Var v = Var($2.id, $1.type, numVariables++, $4.value);
+						currScope().push_back(v);
+						
+						stringstream ss;
+						ss << v.address() << "=" << $4.tempVar.address();
+						emit(ss.str());
+						
+						if(v.type == BOOL_T){
+							bp($4.trueList, next());
+							bp($4.falseList, next());
+						} else {
+
+						}
 					}
 				|   ID ASSIGN Exp SC {
 						assertDefined($1.id);
@@ -102,16 +104,43 @@ Statement:	    {openScope();}	LC Statements RC {closeScope();}
 								exit(0);
 						}
 						v.value = $3.value;
+						
+						stringstream ss;
+						ss << v.address() << "=" <<  $3.tempVar.address();
+						emit(ss.str());
+						
+						if(v.type == BOOL_T){
+							bp($3.trueList, next());
+							bp($3.falseList, next());
+						} else {
+
+						}
+						
 					}
-				|	PRINT ID SC	{
-						assertDefined($2.id);
+				|	PRINT Exp SC	{
+						// todo - change ID to Exp, and take it's temporary .id value.
+						/*assertDefined($2.id);
 						Var& v = findVar($2.id);
 						if (!v.isBase) {
 							errorMismatch(yylineno);
 							exit(0);
-						}
+						}*/
+						Var& v = $2.tempVar;
+						stringstream ss;
+						ss << "print";
+						if (v.type==DECIMAL_T)
+							ss << "D ";
+						if (v.type==BINARY_T)
+							ss << "B ";
+						if (v.type==HEXA_T)
+							ss << "H ";
+						ss << v.address();
+						emit(ss.str());
 					}
 				|	PRINT STRING SC	{
+					stringstream ss;
+					ss << "print " << $2.id;
+					emit(ss.str());
 					}
 				|	INPUT ID SC
 					{
@@ -121,73 +150,145 @@ Statement:	    {openScope();}	LC Statements RC {closeScope();}
 							errorMismatch(yylineno);
 							exit(0);
 						}
+					stringstream ss;
+					ss << "input " << v.address();
+					emit(ss.str());
 					}
-				|	IF LP Exp RP ScopeStatement	{
+				|	IF LP Exp RP M ScopeStatement	{
 						if ($3.type != BOOL_T){
 							errorMismatch(yylineno);
 							exit(0);
 						} 
+						bp($3.trueList, $5.ad.quad);
+						$$.nextList = merge($3.falseList, $6.nextList);
 					}
-				|	IF LP Exp RP ScopeStatement ELSE ScopeStatement	{
+				|	IF LP Exp RP M ScopeStatement ELSE N M ScopeStatement	{
 						if ($3.type != BOOL_T){
 							errorMismatch(yylineno);
 							exit(0);
 						} 
+						bp($3.trueList, $5.ad.quad);
+						bp($3.falseList, $9.ad.quad);
+						$$.nextList = merge(merge($6.nextList, $10.nextList), makelist($8.ad.quad)) ;
 					}
 				|	{
 						++numOfWhiles;
 					}
-					WHILE LP Exp RP ScopeStatement	{
+					WHILE LP M Exp RP M ScopeStatement N{
 						--numOfWhiles;
-						if ($4.type != BOOL_T){
+						if ($5.type != BOOL_T){
 							errorMismatch(yylineno);
 							exit(0);
 						}
+						$8.nextList = merge($8.nextList, makelist($9.ad.quad));
+						bp($5.trueList, $7.ad.quad);
+						bp($8.nextList, $4.ad.quad);
+						$$.nextList = merge($5.falseList, $8.breakList);
 					}
 				|	BREAK SC {
 						if (!numOfWhiles) {
 							errorUnexpectedBreak(yylineno);
 							exit(0);
 						}
+						$$.breakList.push_back(next());
+						emit("goto ");
 					}
-				|	SWITCH LP Exp RP LC CasesList RC {
+				|	SWITCH LP Exp N RP LC CasesList RC {
 						if (!$3.isBase){
 							errorMismatch(yylineno);
 							exit(0);
 						} 
+						
+						list<int> nextList = makelist($4.ad.quad);
+						bp(nextList, next());
+
+						int listSize = $7.caseList.size();
+						for(int i=0; i<listSize; i++){
+							stringstream ss;
+
+							//string new_name = newTemp();
+							//char* new_name_char = (char*)malloc(sizeof(char)*new_name.length()+1);
+							//strcpy(new_name_char,new_name.c_str());
+							
+							//Symbol temp1 = *(new Symbol(new_name_char,  offset++,  $7.ad.case_typeList.front()));
+							//addVarToCurrentScope(temp1, -1);
+							
+							Var v = $7.caseList.front();
+							ss << v.address();
+							ss << "="<< v.value;
+							emit(ss.str());
+							ss.str("");
+							ss.clear();
+
+							ss << "if " << $3.tempVar.address() << " == " << v.address();
+							//ss << performConversion($3.node_type, $7.ad.case_typeList.front(), place) << " ";
+							ss << " goto " << $7.ad.case_quadList.front();
+							emit(ss.str());
+
+							$7.ad.case_quadList.pop_front();
+							$7.caseList.pop_front();
+						}
+						$$.nextList = merge($7.nextList, makelist(next()));
+						$$.breakList = $7.breakList;
+						emit("goto ");
+
 					};	
 					
 Type			:	BaseType {
 							$$.type = $1.type;
-							$$.value = $1.value;
 							$$.isBase = $1.isBase;
 							}
 				|	BOOL{
 							$$.type = $1.type;
-							$$.value = $1.value;
 							$$.isBase = $1.isBase;
 						};
 
 BaseType	:	DECIMAL {
 						$$.type = $1.type;
-						$$.value = $1.value;
 						$$.isBase = $1.isBase;
 						}
 				|	BINARY {
 						$$.type = $1.type;
-						$$.value = $1.value;
 						$$.isBase = $1.isBase;
 						}
 				|	HEXIDECIMAL{
 						$$.type = $1.type;
-						$$.value = $1.value;
 						$$.isBase = $1.isBase;
 						};
 
-CasesList		:	CaseStat CasesList {}
-				|	CaseStat{};
+CasesList		:	CaseStat CasesList {
+						$$.caseList = $2.caseList;
+						$$.caseList.push_front($1.tempVar);
 
-CaseStat		:	CASE NUM BaseType COL ScopeStatement BREAK SC;
+				
+						$$.nextList = merge($1.nextList, $2.nextList); 
+						$$.breakList = merge($1.breakList, $2.breakList);
+						$$.ad.case_quadList = merge($1.ad.case_quadList,$2.ad.case_quadList);
+}
+				|	CaseStat{
+						$$.caseList.push_front($1.tempVar);	
+						$$.nextList = $1.nextList; 
+						$$.breakList = $1.breakList;
+						$$.ad.case_quadList = $1.ad.case_quadList;
+				};
+
+CaseStat		:	CASE NUM BaseType COL M ScopeStatement BREAK SC {
+	long long numValue = -1;
+	if ($3.type == HEXA_T){
+		numValue = std::stoul($2.id, NULL, 16);
+	}else if($3.type == BINARY_T){
+		numValue = std::stoul($2.id, NULL, 2);
+	}else{
+		numValue = $1.value;
+	}
+	$$.tempVar.makeTemp(numVariables++, numValue, $3.type);
+	$$.ad.case_quadList = makelist($5.ad.quad);
+	currScope().push_back($$.tempVar);
+	
+	$$.nextList = merge($6.nextList, makelist(next()));
+	emit("goto ");
+	$$.breakList = $6.breakList;
+};
 
 
 
@@ -211,8 +312,20 @@ ScopeStatement:	Type ID SC
 								errorMismatch(yylineno);
 								exit(0);
 						}
-						currScope().push_back(Var($2.id, $1.type, numVariables++, $4.value));
+						Var v = Var($2.id, $1.type, numVariables++, $4.value);
+						currScope().push_back(v);
 						closeScope();
+						
+						stringstream ss;
+						ss << v.address() << "=" << $4.tempVar.address();
+						emit(ss.str());
+						
+						if(v.type == BOOL_T){
+							bp($4.trueList, next());
+							bp($4.falseList, next());
+						} else {
+
+						}
 					}
 				|	NotScopeStatement;
 				
@@ -230,49 +343,122 @@ NotScopeStatement:	{
 								exit(0);
 						}
 						v.value = $3.value;
+						
+						stringstream ss;
+						ss << v.address() << "=" <<  $3.tempVar.address();
+						emit(ss.str());
+						
+						if(v.type == BOOL_T){
+							bp($3.trueList, next());
+							bp($3.falseList, next());
+						} else {
+
+						}
 					}
-				|	PRINT ID SC	{
-						assertDefined($2.id);
-						Var& v = findVar($2.id);
+				|	PRINT Exp SC	{
+						// todo - change ID to Exp, and take it's temporary .id value.
+						//assertDefined($2.id);
+						Var& v = $2.tempVar;
+						stringstream ss;
+						ss << "print";
+						if (v.type==DECIMAL_T)
+							ss << "D ";
+						if (v.type==BINARY_T)
+							ss << "B ";
+						if (v.type==HEXA_T)
+							ss << "H ";
+						ss << $2.tempVar.address();
+						emit(ss.str());
 					}
-				|	PRINT STRING SC	{}
+				|	PRINT STRING SC	{
+					stringstream ss;
+					ss << "print " << $2.id;
+					emit(ss.str());
+					}
 				|	INPUT ID SC	{
 						assertDefined($2.id);
 						Var& v = findVar($2.id);
+						stringstream ss;
+						ss << "input " << v.address();
+						emit(ss.str());
 					}
-				|	IF LP Exp RP ScopeStatement	{
+				|	IF LP Exp RP M ScopeStatement	{
+						if ($3.type != BOOL_T){
+							errorMismatch(yylineno);
+							exit(0);
+						}
+						bp($3.trueList, $5.ad.quad);
+						$$.nextList = merge($3.falseList, $6.nextList);
+					}
+				|	IF LP Exp RP M ScopeStatement ELSE N M ScopeStatement	{
 						if ($3.type != BOOL_T){
 							errorMismatch(yylineno);
 							exit(0);
 						} 
-					}
-				|	IF LP Exp RP ScopeStatement ELSE ScopeStatement	{
-						if ($3.type != BOOL_T){
-							errorMismatch(yylineno);
-							exit(0);
-						} 
+						bp($3.trueList, $5.ad.quad);
+						bp($3.falseList, $9.ad.quad);
+						$$.nextList = merge(merge($6.nextList, $10.nextList), makelist($8.ad.quad)) ;
 					}
 				|	{
 						++numOfWhiles;
 					}
-					WHILE LP Exp RP ScopeStatement {
+					WHILE LP M Exp RP M ScopeStatement N {
 						--numOfWhiles;
 						if ($4.type != BOOL_T){
 							errorMismatch(yylineno);
 							exit(0);
 						}
+						$8.nextList = merge($8.nextList, makelist($9.ad.quad));
+						bp($5.trueList, $7.ad.quad);
+						bp($8.nextList, $4.ad.quad);
+						$$.nextList = merge($5.falseList, $8.breakList);
 					}
 				|	BREAK SC {
 						if (!numOfWhiles) {
 							errorUnexpectedBreak(yylineno);
 							exit(0);
 						}
+						$$.breakList.push_back(next());
+						emit("goto ");
 					}
-				|	SWITCH LP Exp RP LC CasesList RC {
+				|	SWITCH LP Exp N RP LC CasesList RC {
 						if (!$3.isBase){
 							errorMismatch(yylineno);
 							exit(0);
 						} 
+						
+						list<int> nextList = makelist($4.ad.quad);
+						bp(nextList, next());
+
+						int listSize = $7.caseList.size();
+						for(int i=0; i<listSize; i++){
+							stringstream ss;
+
+							//string new_name = newTemp();
+							//char* new_name_char = (char*)malloc(sizeof(char)*new_name.length()+1);
+							//strcpy(new_name_char,new_name.c_str());
+							
+							//Symbol temp1 = *(new Symbol(new_name_char,  offset++,  $7.ad.case_typeList.front()));
+							//addVarToCurrentScope(temp1, -1);
+							
+							Var v = $7.caseList.front();
+							ss << v.address();
+							ss << "="<< v.value;
+							emit(ss.str());
+							ss.str("");
+							ss.clear();
+
+							ss << "if " << $3.tempVar.address() << " == " << v.address();
+							//ss << performConversion($3.node_type, $7.ad.case_typeList.front(), place) << " ";
+							ss << " goto " << $7.ad.case_quadList.front();
+							emit(ss.str());
+
+							$7.ad.case_quadList.pop_front();
+							$7.caseList.pop_front();
+						}
+						$$.nextList = merge($7.nextList, makelist(next()));
+						$$.breakList = $7.breakList;
+						emit("goto ");
 					};				
 
 
@@ -280,6 +466,7 @@ Exp 			:	LP Exp RP	{
 						$$.type = $2.type;
 						$$.value = $2.value;
 						$$.isBase = $2.isBase;
+						$$.tempVar = $2.tempVar;
 					}
 				|	Exp PLUS Exp{
 						if ($1.type == BOOL_T || $1.type == ID_T ||  $3.type == BOOL_T || $3.type == ID_T) {
@@ -292,6 +479,13 @@ Exp 			:	LP Exp RP	{
 						$$.type = $1.type;
 						$$.isBase = $1.isBase;
 						$$.value = $1.value + $3.value;
+						
+						$$.tempVar.makeTemp(numVariables++, $$.value, $$.type);
+						currScope().push_back($$.tempVar);
+						
+						stringstream ss;
+						ss << $$.tempVar.address() << "=" << $1.tempVar.address() << " + " << $3.tempVar.address();
+						emit(ss.str());
 					}
 				|	Exp MINUS Exp{
 						if ($1.type == BOOL_T || $1.type == ID_T ||  $3.type == BOOL_T || $3.type == ID_T) {
@@ -304,6 +498,13 @@ Exp 			:	LP Exp RP	{
 						$$.type = $1.type;
 						$$.isBase = $1.isBase;
 						$$.value = $1.value - $3.value;
+						
+						$$.tempVar.makeTemp(numVariables++, $$.value, $$.type);
+						currScope().push_back($$.tempVar);
+						
+						stringstream ss;
+						ss << $$.tempVar.address() << "=" << $1.tempVar.address() << " - " << $3.tempVar.address();
+						emit(ss.str());
 					}
 				|	Exp MULT Exp{
 						if ($1.type == BOOL_T || $1.type == ID_T ||  $3.type == BOOL_T || $3.type == ID_T) {
@@ -315,8 +516,14 @@ Exp 			:	LP Exp RP	{
 						}
 						$$.type = $1.type;
 						$$.isBase = $3.isBase;
-
 						$$.value = $1.value * $3.value;
+						
+						$$.tempVar.makeTemp(numVariables++, $$.value, $$.type);
+						currScope().push_back($$.tempVar);
+						
+						stringstream ss;
+						ss << $$.tempVar.address() << "=" << $1.tempVar.address() << " * " << $3.tempVar.address();
+						emit(ss.str());
 					}
 				|	Exp DIV Exp	{
 						if ($1.type == BOOL_T || $1.type == ID_T ||  $3.type == BOOL_T || $3.type == ID_T) {
@@ -330,33 +537,79 @@ Exp 			:	LP Exp RP	{
 						$$.type = $1.type;
 						$$.isBase = $1.isBase;
 						$$.value = $1.value / $3.value;
+						
+						$$.tempVar.makeTemp(numVariables++, $$.value, $$.type);
+						currScope().push_back($$.tempVar);
+						
+						stringstream ss;
+						ss << $$.tempVar.address() << "=" << $1.tempVar.address() << " / " << $3.tempVar.address();
+						emit(ss.str());
 					}
 					
 				|	ID	{
-					assertDefined($1.id);
-					Var &v = findVar($1.id);
-					$$.type = v.type;
-					$$.value = v.value;
-					$$.isBase = v.isBase;
+						assertDefined($1.id);
+						Var &v = findVar($1.id);
+						$$.type = v.type;
+						$$.value = v.value;
+						$$.isBase = v.isBase;
+						$$.tempVar = v;
+						
+						if($$.type == BOOL_T)
+						{
+							stringstream ss;
+							$$.trueList = makelist(next());
+							ss << "if " << v.address() << " == 1 goto ";
+							emit(ss.str());
+							$$.falseList = makelist(next());
+							emit("goto ");
+						}
 					}
 				|	NUM	{
 						$$.type = $1.type;
 						$$.value = $1.value;
 						$$.isBase = $1.isBase;
+						
+						$$.tempVar.makeTemp(numVariables++, $$.value, $$.type);
+						currScope().push_back($$.tempVar);
+						stringstream ss;
+						ss << $$.tempVar.address() << "=" << $1.value;
+						emit(ss.str());
 					}
 				|	NUM BaseType {
 						$$.type = $2.type;
+						// $$.value = convert($1, $$.type); ::
+						if ($2.type == HEXA_T){
+							$$.value = std::stoul($1.id, NULL, 0);
+						}else if($2.type == BINARY_T){
+							$$.value = std::stoul($1.id, NULL, 2);
+						}else{
+							$$.value = $1.value;
+						}
 						$$.isBase = $2.isBase;
+						
+						$$.tempVar.makeTemp(numVariables++, $$.value, $$.type);
+						currScope().push_back($$.tempVar);
+						stringstream ss;
+						ss << $$.tempVar.address() << "=" << $$.value;
+						emit(ss.str());
 					}
 				|	TRUE {
 						$$.type = $1.type;
 						$$.value = $1.value;
 						$$.isBase = $1.isBase;
+						
+						$$.trueList = makelist(next());
+						//$$.falseList = makeEmptyList();
+						emit("goto ");
 					}
 				|	FALSE {
 						$$.type = $1.type;
 						$$.value = $1.value;
 						$$.isBase = $1.isBase;
+						
+						$$.falseList = makelist(next());
+						//$$.trueList = makeEmptyList();
+						emit("goto ");
 					}
 				|	NOT Exp {
 						if ($2.type != BOOL_T) {
@@ -366,8 +619,11 @@ Exp 			:	LP Exp RP	{
 						$$.type = $2.type;
 						$$.value = 1 - $2.value;
 						$$.isBase = $2.isBase;
+						
+						$$.falseList = $2.trueList;
+						$$.trueList = $2.falseList;
 					}
-				|	Exp OR Exp {
+				|	Exp OR M Exp {
 						if ($1.type != BOOL_T || $3.type != BOOL_T) {
 							errorMismatch(yylineno);
 							exit(0);
@@ -375,8 +631,12 @@ Exp 			:	LP Exp RP	{
 						$$.type = $1.type;
 						$$.value = (int)$1.value | (int)$3.value;
 						$$.isBase = $1.isBase;
+						
+						bp($1.falseList, $3.ad.quad);
+						$$.falseList = $4.falseList;
+						$$.trueList = merge($1.trueList, $4.trueList);
 					}
-				|	Exp AND Exp	{
+				|	Exp AND M Exp	{
 						if ($1.type != BOOL_T || $3.type != BOOL_T) {
 							errorMismatch(yylineno);
 							exit(0);
@@ -384,6 +644,10 @@ Exp 			:	LP Exp RP	{
 						$$.type = $1.type;
 						$$.value = (int)$1.value & (int)$3.value;
 						$$.isBase = $1.isBase;
+						
+						bp($1.trueList, $3.ad.quad);
+						$$.trueList = $4.trueList;
+						$$.falseList = merge($1.falseList, $4.falseList);
 					}
 				|	Exp REL_OP Exp	{
 						if (!$1.isBase && $1.type != $3.type || ($1.isBase != $3.isBase)) {
@@ -395,10 +659,37 @@ Exp 			:	LP Exp RP	{
 						}
 						$$.type = BOOL_T;
 						$$.isBase = false;
+						
+						
+					stringstream ss;
+
+					if(!$2.id.compare("<=") || !$2.id.compare(">=")){
+						ss << "if " << $1.tempVar.address() << " " << $2.id[0] << " " << $3.tempVar.address() << " goto ";
+						$$.trueList = makelist(next());
+						emit(ss.str());
+						ss.str("");
+
+						ss << "if " << $1.tempVar.address() << " " << "==" <<  " " << $3.tempVar.address() << " goto ";
+						$$.trueList = merge($$.trueList, makelist(next()));
+						emit(ss.str());
+
+						$$.falseList = makelist(next());
+						emit("goto ");
+
+					} else {
+						ss << "if " << $1.tempVar.address() << " " << $2.id << " " << $3.tempVar.address() << " goto ";
+						$$.trueList = makelist(next());
+						emit(ss.str());
+
+						$$.falseList = makelist(next());
+						emit("goto ");
+					}
 					};
 	
-	
-	
+
+M : {$$.ad.quad = next(); }
+
+N : {$$.ad.quad = next(); emit("goto ");}	
 	
 	
 	
@@ -426,6 +717,7 @@ int main() {
 	openScope();
 	yyparse();
 	closeScope();
+	printBuffer();
 }
 
 int yyerror(const char* message){

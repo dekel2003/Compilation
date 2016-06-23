@@ -43,3 +43,12 @@ list<int> merge(list<int> l1,list<int> l2)
 	return newList;
 }
 
+string newTemp()
+{
+    static int tempCount = 0;
+    ostringstream oss;
+    oss << "@t" << tempCount++;
+    return oss.str();
+}
+
+

@@ -94,7 +94,7 @@ bool						{
 
 \*							{return MULT;}
 \/							{return DIV;}
-"<="|">="|"=="|"!="|"<"|">"			{return REL_OP;}
+"<="|">="|"=="|"!="|"<"|">"			{yylval.id = string(yytext); return REL_OP;}
 
 \;							{return SC;}
 
@@ -121,14 +121,18 @@ or							{return OR;}
 							}
 
 
-[0]|[1-9]{digit}* 			{
+[0]|[1-9]{digit}*|0x[1-9A-F][0-9A-F]*	{
 								yylval.type = DECIMAL_T;
 								yylval.value = atoi(yytext);
 								yylval.isBase = true;
+								yylval.id = string(yytext);
 								return NUM;
 							}
 
-\"[^"]*\"					{return STRING;}
+\"[^"]*\"					{
+								yylval.id = string(yytext);
+								return STRING;
+							}
 
 
 "//"[^\n]*\n 				{} 
